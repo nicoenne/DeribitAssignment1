@@ -1,6 +1,8 @@
 # Mark price calculator
 
-This application monitors real-time mark prices for Bitcoin options on Deribit, showing both calculated and Deribit-provided prices for calls and puts across different strikes. It is built with Python and Dash and designed for modularity and ease of extension.
+This application provides a real-time dashboard for monitoring Bitcoin option mark prices on Deribit.
+It displays both custom-calculated and Deribit-provided prices for calls and puts options across different strikes.
+It is built with Python and Dash and designed for modularity and ease of extension.
 
 ## Installation
 
@@ -12,7 +14,7 @@ pip install numpy pandas threading websocket certifi scipy datetime dash dash_bo
 
 ## Usage
 
-From the root directory, run main.py:
+From the root directory, edit the custom inputs on main.py and run the script:
 
 ```python
 # Inputs example:
@@ -27,31 +29,78 @@ threading.Thread(target=calculator.run, daemon=True).start()
 run_app(calculator)
 ```
 
-The app is hosted on local host and it is accessible through a browser (tested on Chrome).
-At the start, the console will output the following:
+Then open a browser (tested on Chrome) and go to:
 
-```console
-Starting mark price generator for 23MAY25
-Runtime: 3600 seconds, Interval: 2 seconds
-Strikes: [95000, 100000, 105000]
-Connecting to Deribit API ...
-Dash is running on http://127.0.0.1:8050/
-
- * Serving Flask app 'mark_price_calc.dashboard'
- * Debug mode: off
-WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
- * Running on http://127.0.0.1:8050
-Press CTRL+C to quit
-Waiting for initial market data...
-Connection established
+```cpp
+http://127.0.0.1:8050/
 ```
-On the browser, the app will show the requested information as in the following image:
+
+You will see the table for custom computed prices and Deribit prices.
 
 ![screenshot](app_example.png)
 
-## Key Assumptions
+## Feature
 
-In order to get a realistic mark price for an arbitrary choice of strikes, I implemented two solutions, depending on the option liquidity.
-For each contract, I subscribed to the corresponding order book updates, in order to keep track of the best bid and best asks. The mark price is computed as mark_price = index_price + EMA( ( best_bid + best_ask ) / 2 - index_price), where EMA is the Exponential Moving Average over the past 2.5 minutes.
-Such choice is based on the available literature, given the necessity of keeping the price stable in case of market manipulation attempts.
-Whenever an order book is not available through Deribit subscription, a fallback solution based on Black & Scholes formula is used. Here, the underlying price (BTC) and the historical volaility is taken through Deribit API.
++ Real-time updates every `t2` seconds for a total duration of `t1` seconds.
++ Displays a two-sided table:
+  + **Left side**: Deribit and custom price for call options
+  + **Middle**: Strikes
+  + **Right side**: Deribit and custom price for put options
++ Clear separation between data logic and user interface:
+  + `MarPriceCalculator`: All logic for fetching, computing and storing prices
+  + `run_app`: Visualization layer that listens for data updates
+
+## Rationale and Key Assumptions
+
+To compute realistic mark prices for a wide range of strike prices, I implemented a dual-method approach that adapts
+based on option liquidity:
+
+### 1. Order Book-Based Mark Pricing (Primary Method)
+
+For each option contract with available order book data, I subscribe to live order book updates to track the best 
+bid and best ask prices. The mark price is computed using the formula:
+
+```console
+mark_price = index_price + EMA(( best_bid + best_ask ) / 2 - index_price)
+```
+
+Where:
++ `index_price` is te Deribit index price of BTC
++ `EMA` is the *Exponential Moving Average* with a time window of 2.5 minutes
+
+This approach is inspired by available literature, aiming to smooth out short-term price noise
+and mitigate the impact of market manipulation near illiquid strikes or expiry boundaries.
+
+### 2. Black-Scholes Fallback (Low-Liquidity or Missing Order Book)
+
+If a contract's order book data is unavailable or incomplete, a fallback pricing method is used based on the
+Black-Scholes model:
+
+Where:
++ The underlying asset price (BTC) and historical volatility are fetched directly from the Deribit API.
++ Option prices are then computed using the Black-Scholes formula, assuming European-style options and continuous markets.
+
+This ensures that we can still estimate prices for low-volume strikes, or newly listed expiries.
+
+## Challenges
+
+1. **Ensuring Reliable API Communication**  
+The Deribit API serves as the backbone of the application. It was essential to manage:
+   + Proper authentication and request formatting
+   + Real-time WebSocket subscriptions to maintain live data streams without dropouts
+2. **Concurrency and Multithreading**  
+To track multiple option contracts in parallel and handle live order book updates:
+   + A proper multithreaded architecture was needed to avoid blocking calls
+3. **Fallback Logic for Missing Order Books**  
+During tests, I noticed that some option contracts don’t have active order books, requiring:
+   + A decision-making layer to fall back to Black-Scholes pricing
+   + Real-time retrieval of underlying and volatility data
+4. **Data Synchronization and Storage**  
+Maintaining and updating a shared memory structure for the latest prices across threads required:
+   + Thread-safe design of the `MarkPriceCalculator`
+   + Efficient data structures for low-latency access by the Dash interface
+5. **Designing a Clear and Informative UI**  
+Visualizing a wide matrix of calls and puts efficiently involved: 
+   + Designing a table layout that groups related data logically
+   + Handling refreshes smoothly without freezing or flickering
+   + Ensuring the interface reflects real-time updates without overwhelming the user
